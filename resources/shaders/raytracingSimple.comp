@@ -1,0 +1,333 @@
+#version 430 core
+
+//Simplified raytracer for the GPU. A Ray will only produce one child ray. So no reflection and refraction from one single ray.
+//This leads to less bulky code and also way faster code
+
+struct Material {
+    vec4 color;
+    vec4 modifiers;  //First value is reflectivness, second one is transparency
+};
+
+struct Sphere {
+    vec4 position;
+    vec4 radius;
+    Material material;
+};
+
+struct MeshObject {
+    vec4 vertexData[1024];
+    mat4 modelMatrix;
+    vec4 numTris;
+    Material material;
+};
+
+struct PointLight {
+    vec4 position;
+    vec4 color;  //Last vlaue is intensity
+};
+
+struct Camera {
+    mat4 modelMatrix;
+};
+
+struct SceneData {
+    MeshObject meshObjects[4];
+    Sphere spheres[4];
+    PointLight pointLights[4];
+    Camera camera;
+    int numMeshObjects;
+    int numSpheres;
+    int numPointLights;
+    int screenWidth;
+    int screenHeight;
+};
+
+struct IntersectionData {
+    Material material;
+    vec3 position;
+    vec3 normal;
+    bool hit;
+};
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct RTNode {
+    IntersectionData intersectionData;
+    Ray childRay;
+    vec3 color;
+    int rayType;  //1 = Reflection; 2 = Refraction
+    float fresnel;
+    bool isLeaf;
+    bool hasChildRay;
+};
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba32f, binding = 0) uniform image2D img_output;
+layout(std430, binding = 1) buffer sceneDataBuffer {
+    MeshObject meshObjects[8];
+    Sphere spheres[4];
+    PointLight pointLights[4];
+    Camera camera;
+    int numMeshObjects;
+    int numSpheres;
+    int numPointLights;
+    int screenWidth;
+    int screenHeight;
+};
+
+vec3 raytracePixel(vec3 origin, vec3 dir);
+RTNode raytraceRay(Ray ray, int depth, int maxDepth);
+IntersectionData raycastObjects(vec3 origin, vec3 dir);
+
+void main() {
+    vec4 pixelColor = vec4(1.0, 0.0, 0.0, 1.0);
+
+    //Constants and definitions
+    float pi = 3.14159f;
+
+    //Computing ray direction
+    float invWidth = 1 / float(screenWidth), invHeight = 1 / float(screenHeight);
+    float fov = 30;
+    float aspectratio = screenWidth / float(screenHeight);
+    float angle = tan(pi * 0.5 * fov / 180.0f);
+    float xx = (2 * ((float(gl_GlobalInvocationID.x) + 0.5) * invWidth) - 1) * angle * aspectratio;
+    float yy = -(1 - 2 * ((float(gl_GlobalInvocationID.y) + 0.5) * invHeight)) * angle;  //Y-Axis is flipped
+
+    //Calculating the camera ray with camera transformations in mind
+    vec4 camPosWorld = camera.modelMatrix * vec4(0, 0, 0, 1);
+    vec4 projectionRayWorld = camera.modelMatrix * vec4(xx, yy, 1, 1);
+    vec4 projectionRayDirWorld = projectionRayWorld - camPosWorld;
+    projectionRayDirWorld = normalize(projectionRayDirWorld);
+
+    //Actual raytracing
+    pixelColor.xyz = raytracePixel(camPosWorld.xyz, projectionRayDirWorld.xyz);
+
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    imageStore(img_output, pixel_coords, pixelColor);
+}
+
+RTNode raytraceRay(Ray ray, int depth, int maxDepth) {
+    IntersectionData intersect = raycastObjects(ray.origin, ray.direction);
+    RTNode node;
+    node.intersectionData = intersect;
+    node.color = vec3(0, 0, 0);
+    node.fresnel = 0;
+    node.isLeaf = false;
+    node.hasChildRay = false;
+
+    if (intersect.hit) {
+        if ((intersect.material.modifiers.x > 0.0f || intersect.material.modifiers.y > 0.0f) && depth < maxDepth - 1) {
+            //Reflective and refractive color computation
+            bool inObject = false;
+            vec3 norm = intersect.normal;
+            if (dot(ray.direction, norm) > 0) {
+                norm = -norm;
+                inObject = true;
+            }
+
+            float facingRatio = -dot(ray.direction, norm);
+            node.fresnel = mix(pow(1 - facingRatio, 3), 1.0f, 0.1f);
+
+            int rayType = 0;
+            if (intersect.material.modifiers.x > 0.0f && intersect.material.modifiers.y == 0.0f) {
+                rayType = 1;
+            } else if (intersect.material.modifiers.x == 0.0f && intersect.material.modifiers.y > 0.0f) {
+                rayType = 2;
+            } else if (intersect.material.modifiers.x > intersect.material.modifiers.y) {
+                rayType = 1;
+            } else if (intersect.material.modifiers.x < intersect.material.modifiers.y) {
+                rayType = 2;
+            }
+
+            if (rayType == 1) {
+                vec3 reflectionDir = normalize(ray.direction - norm * 2.0f * dot(ray.direction, norm));
+
+                vec3 newRayOrigin = intersect.position + norm * 0.001f;
+
+                Ray reflectionRay = Ray(newRayOrigin, reflectionDir);
+
+                node.childRay = reflectionRay;
+                node.hasChildRay = true;
+                node.rayType = 1;
+            } else if (rayType == 2) {
+                float ior = 1.1f;  //Index of refraction
+                float eta = ior;
+                if (!inObject) {
+                    eta = 1.0f / ior;
+                }
+                float cosi = -dot(ray.direction, norm);
+                float k = 1 - eta * eta * (1 - cosi * cosi);
+                vec3 refractionDir =  normalize(ray.direction * eta + norm * (eta * cosi - sqrt(k)));
+
+                vec3 newRayOrigin = intersect.position - norm * 0.001f;
+
+                Ray refractionRay = Ray(newRayOrigin, refractionDir);
+                node.childRay = refractionRay;
+                node.hasChildRay = true;
+                node.rayType = 2;
+            }
+        } else {
+            //Diffuse color computation
+            for (int i = 0; i < numPointLights; i++) {
+                float dst = distance(intersect.position, pointLights[i].position.xyz);
+                if (dst < 1.0f) {
+                    dst = 1.0f;
+                }
+
+                vec3 shadowRayDir = normalize(pointLights[i].position.xyz - intersect.position);
+
+                vec3 newRayOrigin = intersect.position + intersect.normal * 0.001f;
+                IntersectionData shadowIntersect = raycastObjects(newRayOrigin, shadowRayDir);
+
+                if (!shadowIntersect.hit) {
+                    //Diffuse color calculation. Light intensity uses the inverse square law with a scaling modifier
+                    node.color += intersect.material.color.xyz * max(0.0f, dot(intersect.normal, shadowRayDir)) * pointLights[i].color.xyz * pointLights[i].color.w * 1.0f / pow(dst, 0.01f);
+                }
+            }
+            node.isLeaf = true;
+        }
+    }
+    return node;
+}
+
+vec3 raytracePixel(vec3 origin, vec3 dir) {
+    //Constants and definitions
+    const int maxDepth = 6;
+    RTNode raytracingArray[maxDepth];
+
+    for (int i = 0; i < maxDepth; i++) {
+        raytracingArray[i].color = vec3(0, 0, 0);
+        raytracingArray[i].fresnel = 0;
+        raytracingArray[i].rayType = 0;
+        raytracingArray[i].hasChildRay = false;
+        raytracingArray[i].isLeaf = false;
+    }
+
+    //Build raytracing stack
+    Ray ray;
+    ray.origin = origin;
+    ray.direction = dir;
+
+    raytracingArray[0] = raytraceRay(ray, 0, maxDepth);
+    for (int i = 1; i < maxDepth; i++) {
+        if (raytracingArray[i - 1].hasChildRay) {
+            raytracingArray[i] = raytraceRay(raytracingArray[i - 1].childRay, i, maxDepth);
+        }
+    }
+
+    //Backtrack from last node to the first
+    for (int i = maxDepth - 1; i > 0; i--) {
+        if (raytracingArray[i - 1].hasChildRay) {
+            if (raytracingArray[i].isLeaf) {
+                raytracingArray[i - 1].color = raytracingArray[i].color;
+            } else {
+                if (raytracingArray[i - 1].rayType == 1) {
+                    raytracingArray[i - 1].color = (raytracingArray[i].color * raytracingArray[i - 1].fresnel * raytracingArray[i - 1].intersectionData.material.modifiers.x) * raytracingArray[i - 1].intersectionData.material.color.xyz;
+                }
+                if (raytracingArray[i - 1].rayType == 2) {
+                    raytracingArray[i - 1].color = (raytracingArray[i].color * (1 - raytracingArray[i - 1].fresnel) * raytracingArray[i - 1].intersectionData.material.modifiers.y) * raytracingArray[i - 1].intersectionData.material.color.xyz;
+                }
+            }
+        }
+    }
+    return raytracingArray[0].color;
+}
+
+IntersectionData raycastObjects(vec3 origin, vec3 rayDir) {
+    IntersectionData closestIntersect;
+    closestIntersect.hit = false;
+    closestIntersect.position = vec3(0, 0, 0);
+    float closestDistance = 99999.0f;
+
+    //Mesh raycasting
+    for (int m = 0; m < numMeshObjects; m++) {
+        for (int i = 0; i < meshObjects[m].numTris.x * 3; i += 3) {
+            //Möller–Trumbore intersection algorithm
+            vec3 vertex0 = (meshObjects[m].modelMatrix * meshObjects[m].vertexData[i]).xyz;
+            vec3 vertex1 = (meshObjects[m].modelMatrix * meshObjects[m].vertexData[i + 1]).xyz;
+            vec3 vertex2 = (meshObjects[m].modelMatrix * meshObjects[m].vertexData[i + 2]).xyz;
+
+            vec3 edge1 = vertex1 - vertex0;
+            vec3 edge2 = vertex2 - vertex0;
+
+            vec3 pvec = cross(rayDir, edge2);
+
+            float det = dot(edge1, pvec);
+            float epsilon = 0.0001f;
+
+            if (det < epsilon) {
+                continue;
+            }
+
+            float invDet = 1.0f / det;
+
+            vec3 tvec = origin - vertex0;
+
+            float x = dot(tvec, pvec) * invDet;
+            if (x < 0.0f || x > 1.0f) {
+                continue;
+            }
+
+            vec3 qvec = cross(tvec, edge1);
+            float y = dot(rayDir, qvec) * invDet;
+            if (y < 0.0f || x + y > 1.0f) {
+                continue;
+            }
+
+            float z = dot(edge2, qvec) * invDet;
+
+            vec3 intersect = origin + rayDir * z;
+            vec3 norm = normalize(cross(edge1, edge2));
+
+            if (z < epsilon) {
+                continue;
+            }
+
+            float dst = distance(intersect, origin);
+            if (dst < closestDistance) {
+                closestDistance = dst;
+                closestIntersect = IntersectionData(meshObjects[m].material, intersect, norm, true);
+            }
+        }
+    }
+
+    //Sphere raycasting
+    for (int s = 0; s < numSpheres; s++) {
+        vec3 centerOrigin = spheres[s].position.xyz - origin;
+        float tco = dot(centerOrigin, rayDir);
+        if (tco < 0) {
+            continue;
+        }
+        float dstToCenterSqr = dot(centerOrigin, centerOrigin) - (tco * tco);
+        float radiusSquared = spheres[s].radius.x * spheres[s].radius.x;
+        if (dstToCenterSqr > radiusSquared) {
+            continue;
+        }
+        float thc = sqrt(radiusSquared - dstToCenterSqr);
+        float th0 = tco - thc;
+        float th1 = tco + thc;
+        if (th0 > th1) {
+            float temp = th0;
+            th0 = th1;
+            th1 = temp;
+        }
+        if (th0 < 0) {
+            th0 = th1;
+            if (th0 < 0) {
+                continue;
+            }
+        }
+        vec3 hitPos = origin + th0 * rayDir;
+        vec3 normal = normalize((hitPos - (spheres[s].position.xyz) / spheres[s].radius.x));
+
+        float dst = distance(hitPos, origin);
+        if (dst < closestDistance) {
+            closestDistance = dst;
+            closestIntersect = IntersectionData(spheres[s].material, hitPos, normal, true);
+        }
+    }
+    return closestIntersect;
+}

@@ -1,0 +1,45 @@
+{
+    "tasks": [
+        {
+            "label": "BuildDebug",
+            "type": "shell",
+            "command": "python",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "args": [
+                "CPPBuildAid.py",
+                "-b",
+                "debug",
+                "-t",
+                "8"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "BuildRelease",
+            "type": "shell",
+            "command": "python",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "args": [
+                "CPPBuildAid.py",
+                "-b",
+                "release",
+                "-t",
+                "8"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+    ],
+    "version": "2.0.0"
+}

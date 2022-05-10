@@ -1,0 +1,263 @@
+#version 430 core
+
+//Just as a reference. Does not work as GPUs do not allow recursion
+
+struct Material {
+    vec4 color;
+    vec4 modifiers;//First value is reflectivness, second one is transparency
+};
+
+struct Sphere {
+    vec4 position;
+    vec4 radius;
+    Material material;
+};
+
+struct MeshObject {
+    vec4 vertexData[1024];
+    mat4 modelMatrix;
+    vec4 numTris;
+    Material material;
+};
+
+struct PointLight {
+    vec4 position;
+    vec4 color;//Last vlaue is intensity
+};
+
+struct Camera {
+    mat4 modelMatrix;
+};
+
+struct SceneData {
+    MeshObject meshObjects[4];
+    Sphere spheres[4];
+    PointLight pointLights[4];
+    Camera camera;
+    int numMeshObjects;
+    int numSpheres;
+    int numPointLights;
+    int screenWidth;
+    int screenHeight;
+};
+
+struct IntersectionData {
+    Material material;
+    vec3 position;
+    vec3 normal;
+    bool hit;
+};
+
+layout(local_size_x = 1, local_size_y = 1) in;
+layout(rgba32f, binding = 0) uniform image2D img_output;
+layout(std430, binding = 1) buffer sceneDataBuffer {
+    SceneData sceneData;
+};
+
+vec3 raytrace(vec3 origin, vec3 dir, int depth);
+IntersectionData raycastObjects(vec3 origin, vec3 dir);
+
+void main() {
+    vec4 pixelColor = vec4(1.0, 0.0, 0.0, 1.0);
+
+    //Constants and definitions
+    const float pi = 3.14159f;
+    const int maxDepth = 5;
+
+    //Computing ray direction
+    float invWidth = 1 / float(sceneData.screenWidth), invHeight = 1 / float(sceneData.screenHeight);
+    float fov = 30;
+    float aspectratio = sceneData.screenWidth / float(sceneData.screenHeight);
+    float angle = tan(pi * 0.5 * fov / 180.0f);
+    float xx = (2 * ((float(gl_GlobalInvocationID.x) + 0.5) * invWidth) - 1) * angle * aspectratio;
+    float yy = -(1 - 2 * ((float(gl_GlobalInvocationID.y) + 0.5) * invHeight)) * angle;  //Y-Axis is flipped
+
+    //Calculating the camera ray with camera transformations in mind
+    vec4 camPosWorld = sceneData.camera.modelMatrix * vec4(0, 0, 0, 1);
+    vec4 projectionRayWorld = sceneData.camera.modelMatrix * vec4(xx, yy, 1, 1);
+    vec4 projectionRayDirWorld = projectionRayWorld - camPosWorld;
+    projectionRayDirWorld = normalize(projectionRayDirWorld);
+
+    //Actual raytracing
+    pixelColor.xyz = raytrace(camPosWorld.xyz, projectionRayDirWorld.xyz, 0);
+
+    //pixelColor = pixelColor * 0.1f;
+    //pixelColor.w = 1.0f;
+    //pixelColor.xyz = models[1].vertexData[35].xyz;
+
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    imageStore(img_output, pixel_coords, pixelColor);
+}
+
+vec3 raytrace(vec3 origin, vec3 dir, int depth) {
+    IntersectionData intersect = raycastObjects(origin, dir);
+        vec3 surfaceColor = vec3(0, 0, 0);
+        if (intersect.hit) {
+            if (depth < 5 && (intersect.material.modifiers.x > 0.0f || intersect.material.modifiers.y > 0.0f)) {
+                //Reflective and refractive color computation
+                vec3 intersectPos = intersect.position;
+                bool inObject = false;
+                vec3 norm = intersect.normal;
+                if (dot(dir, norm) > 0) {
+                    norm = -norm;
+                    inObject = true;
+                }
+
+                float facingRatio = -dot(dir, norm);
+                float fresnel = mix(pow(1 - facingRatio, 3), 1.0f, 0.1f);
+
+                vec3 reflectionDir = dir - norm * 2.0f * dot(dir, norm);
+                reflectionDir = normalize(reflectionDir);
+
+                vec3 newRayOrigin = intersectPos + norm * 0.0001f;
+                vec3 reflectionColor = raytrace(newRayOrigin, reflectionDir, depth + 1);//Recursion!
+
+                vec3 refractionColor = vec3(0, 0, 0);
+                if (intersect.material.modifiers.y > 0.0f) {
+                    float ior = 1.1f;  //Index of refraction
+                    float eta = ior;
+                    if (!inObject) {
+                        eta = 1.0f / ior;
+                    }
+                    float cosi = -dot(dir, norm);
+                    float k = 1 - eta * eta * (1 - cosi * cosi);
+                    vec3 refractionDir = dir * eta + norm * (eta * cosi - sqrt(k));
+                    refractionDir = normalize(refractionDir);
+                    newRayOrigin = intersectPos - norm * 0.0001f;
+                    refractionColor = raytrace(newRayOrigin, refractionDir, depth + 1);//Recursion!
+                }
+                surfaceColor = (reflectionColor * fresnel * intersect.material.modifiers.x + refractionColor * (1 - fresnel) * intersect.material.modifiers.y) * intersect.material.color.xyz;
+            } else {
+                //Diffuse color computation
+                for(int i = 0; i < sceneData.numPointLights; i++) {               
+                    float dst = distance(intersect.position, sceneData.pointLights[i].position.xyz);
+                    if (dst < 1.0f) {
+                        dst = 1.0f;
+                    }
+
+                    vec3 shadowRayDir = sceneData.pointLights[i].position.xyz - intersect.position;
+                    vec3 norm = intersect.normal;
+                    shadowRayDir = normalize(shadowRayDir);
+
+                    /*bool inObject = false;
+                    if (glm::dot(dir, norm) > 0) {
+                        norm = -norm;
+                        inObject = true;
+                    }*/
+
+                    vec3 newRayOrigin = intersect.position + norm * 0.001f;
+                    IntersectionData shadowIntersect = raycastObjects(newRayOrigin, shadowRayDir);
+
+                    if (!shadowIntersect.hit) {
+                        //Diffuse color calculation. Light intensity uses the inverse square law with a scaling modifier
+                        surfaceColor += intersect.material.color.xyz * 1.0f * max(0.0f, dot(norm, shadowRayDir)) * sceneData.pointLights[i].color.xyz * sceneData.pointLights[i].color.w * 1.0f / pow(dst, 0.01f);
+                    }
+                }
+            }
+        }
+        return surfaceColor;
+}
+
+IntersectionData raycastObjects(vec3 origin, vec3 rayDir) {
+    IntersectionData closestIntersect;
+    closestIntersect.hit = false;
+    closestIntersect.position = vec3(0, 0, 0);
+    float dst = 9999999.0f;
+
+    //Mesh raycasting
+    for (int m = 0; m < sceneData.numMeshObjects; m++) {
+        for (int i = 0; i < sceneData.meshObjects[m].numTris.x * 3; i += 3) {
+            //Möller–Trumbore intersection algorithm
+            vec3 vertex0 = (sceneData.meshObjects[m].modelMatrix * sceneData.meshObjects[m].vertexData[i]).xyz;
+            vec3 vertex1 = (sceneData.meshObjects[m].modelMatrix * sceneData.meshObjects[m].vertexData[i + 1]).xyz;
+            vec3 vertex2 = (sceneData.meshObjects[m].modelMatrix * sceneData.meshObjects[m].vertexData[i + 2]).xyz;
+
+            //vec3 vertex0 = models[m].vertexData[i].xyz;
+            //vec3 vertex1 = models[m].vertexData[i + 1].xyz;
+            //vec3 vertex2 = models[m].vertexData[i + 2].xyz;
+
+            vec3 edge1 = vertex1 - vertex0;
+            vec3 edge2 = vertex2 - vertex0;
+
+            vec3 pvec = cross(rayDir, edge2);
+
+            float det = dot(edge1, pvec);
+            float epsilon = 0.0000001f;
+
+            if (det < epsilon) {
+                continue;
+            }
+
+            float invDet = 1.0f / det;
+
+            vec3 tvec = origin - vertex0;
+
+            float x = dot(tvec, pvec) * invDet;
+            if (x < 0.0f || x > 1.0f) {
+                continue;
+            }
+
+            vec3 qvec = cross(tvec, edge1);
+            float y = dot(rayDir, qvec) * invDet;
+            if (y < 0.0f || x + y > 1.0f) {
+                continue;
+            }
+
+            float z = dot(edge2, qvec) * invDet;
+
+            vec3 intersect = vertex0 + edge2 * x + edge1 * y;
+            vec3 norm = cross(edge1, edge2);
+            norm = normalize(norm);
+            norm = norm * 0.00001f;
+            intersect = intersect + norm;
+
+            if (z < epsilon) {
+                continue;
+            }
+
+            if (distance(intersect, origin) < dst) {
+                dst = distance(intersect, origin);
+                vec3 tris[3];
+                tris[0] = vertex0;
+                tris[1] = vertex1;
+                tris[2] = vertex2;
+                closestIntersect = IntersectionData(sceneData.meshObjects[m].material, intersect, norm, true);
+            }
+        }
+    }
+
+    //Sphere raycasting
+    for (int s = 0; s < sceneData.numSpheres; s++) {
+        vec3 centerOrigin = sceneData.spheres[s].position.xyz - origin;
+        float tco = dot(centerOrigin, rayDir);
+        if (tco < 0) {
+            continue;
+        }
+        float dstToCenterSqr = dot(centerOrigin, centerOrigin) - (tco * tco);
+        float radiusSquared = sceneData.spheres[s].radius.x * sceneData.spheres[s].radius.x;
+        if(dstToCenterSqr > radiusSquared) {
+            continue;
+        }
+        float thc = sqrt(radiusSquared - dstToCenterSqr);
+        float th0 = tco - thc;
+        float th1 = tco + thc;
+        if(th0 > th1) {
+            float temp = th0;
+            th0 = th1;
+            th1 = temp;
+        }
+        if(th0 < 0) {
+            th0 = th1;
+            if(th0 < 0) {
+                continue;
+            }
+        }
+        vec3 hitPos = origin + th0 * rayDir;
+        vec3 normal = normalize((hitPos - sceneData.spheres[s].position.xyz) / sceneData.spheres[s].radius.x);
+
+        if (distance(hitPos, origin) < dst) {
+            closestIntersect = IntersectionData(sceneData.spheres[s].material, hitPos, normal, true);
+        }
+    }
+    return closestIntersect;
+}
