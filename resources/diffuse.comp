@@ -1,7 +1,7 @@
 #version 430 core
 
-#define IMG_WIDTH 1800
-#define IMG_HEIGHT 1200
+#define IMG_WIDTH 1920
+#define IMG_HEIGHT 1080
 #define BLUR_WEIGHT 0.01
 #define DECAY_RATE 0.1
 

@@ -2,6 +2,8 @@
 #include "gl_error_handeling.h"
 #include "shader.h"
 #include "shader_program.h"
+#include "text_renderer.h"
+#include "texture.h"
 
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -10,11 +12,11 @@
 #include <sys/time.h>
 #include <time.h>
 
-#define SCREEN_WIDTH 1800
-#define SCREEN_HEIGHT 1200
+#define SCREEN_WIDTH 1920
+#define SCREEN_HEIGHT 1080
 
-#define SIMULATION_WIDTH 1800
-#define SIMULATION_HEIGHT 1200
+#define SIMULATION_WIDTH 1920
+#define SIMULATION_HEIGHT 1080
 #define NUM_INDIVIDUALS 1000000
 
 int main(int argc, char* argv[]) {
@@ -136,6 +138,13 @@ int main(int argc, char* argv[]) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sim_cs_delta_buffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    Texture* font_texture = texture_create();
+    texture_load_from_file(font_texture, "resources/MyAsciiFont_BBG.png");
+
+    TextRenderer* text_renderer = text_renderer_create();
+
+    float identity[] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+
     int32_t running = 1;
     while (running) {
         last = current;
@@ -160,7 +169,7 @@ int main(int argc, char* argv[]) {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         shader_program_use(sim_sp);
-        glDispatchCompute(NUM_INDIVIDUALS / 100, 1, 1);
+        glDispatchCompute(NUM_INDIVIDUALS / 1000, 1, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
         shader_program_use(diffuse_sp);
@@ -168,13 +177,18 @@ int main(int argc, char* argv[]) {
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
         shader_program_use(tex_sp);
-        glUniform1i(glGetUniformLocation(tex_sp, "tex"), 0);
+        shader_program_set_uniform_int(tex_sp, "tex", 0);
+        shader_program_set_uniform_mat4(tex_sp, "m", identity);
 
         glBindVertexArray(tex_vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
+
+        char fps_text_buffer[32];
+        sprintf(fps_text_buffer, "%.1f FPS", 1.0f / delta);
+        text_renderer_draw_text(text_renderer, fps_text_buffer, font_texture, tex_sp, -18, 18, 0.05f);
 
         SDL_GL_SwapWindow(window);
     }

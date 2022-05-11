@@ -4,12 +4,12 @@
 
 typedef struct {
     uint32_t id;
-    uint32_t width;
-    uint32_t height;
-    uint32_t channel_count;
+    int32_t width;
+    int32_t height;
+    int32_t channel_count;
 } Texture;
 
-Texture* create_texture();
+Texture* texture_create();
 
 void texture_load_from_file(Texture* texture, const char* const path);
 

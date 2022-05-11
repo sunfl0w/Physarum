@@ -1,14 +1,14 @@
 #version 430 core
 
-#define SIMULATION_WIDTH 1800
-#define SIMULATION_HEIGHT 1200
+#define SIMULATION_WIDTH 1920
+#define SIMULATION_HEIGHT 1080
 #define NUM_INDIVIDUALS 1000000
-#define GROUP_COMPUTE_SIZE 100
+#define LOCAL_COMPUTE_SIZE 100
 #define SIMULATION_SPEED 30
 #define SAMPLE_DISTANCE 20
 #define TURN_RATE 30
 
-layout(local_size_x = 1) in;
+layout(local_size_x = 10) in;
 layout(rgba32f, binding = 0) uniform image2D img_output;
 layout(binding = 1) buffer cs_input_data {
     vec4 individuals[NUM_INDIVIDUALS];
@@ -36,9 +36,9 @@ float sample_image(ivec2 pos) {
 }
 
 void main() {
-    for(int i = 0; i < GROUP_COMPUTE_SIZE; i++) {
-        vec2 pos = individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].xy;
-        float angle = individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].z;
+    for(int i = 0; i < LOCAL_COMPUTE_SIZE; i++) {
+        vec2 pos = individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].xy;
+        float angle = individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].z;
 
         float sample_front = sample_image(ivec2(pos.x + sin(angle) * SAMPLE_DISTANCE, pos.y + cos(angle) * SAMPLE_DISTANCE));
         float sample_left = sample_image(ivec2(pos.x + sin(angle - 0.5) * SAMPLE_DISTANCE, pos.y + cos(angle - 0.5) * SAMPLE_DISTANCE));
@@ -47,24 +47,24 @@ void main() {
         uint rand1 = hash(rand0);
 
         if(sample_front > sample_left && sample_front > sample_right) {
-            individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].z += 0.0;
+            individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].z += 0.0;
         } else if (sample_front < sample_left && sample_front < sample_right) {
-            individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].z += ((rand0 / 4294967295.0) - 0.5) * 2.0 * TURN_RATE * delta;
+            individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].z += ((rand0 / 4294967295.0) - 0.5) * 2.0 * TURN_RATE * delta;
         } else if (sample_left > sample_right) {
-            individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].z -= (rand0 / 4294967295.0) * TURN_RATE * delta;
+            individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].z -= (rand0 / 4294967295.0) * TURN_RATE * delta;
         } else if (sample_left < sample_right) {
-            individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].z += (rand0 / 4294967295.0) * TURN_RATE * delta;
+            individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].z += (rand0 / 4294967295.0) * TURN_RATE * delta;
         }
 
         vec2 new_pos = vec2(pos.x + sin(angle) * delta * SIMULATION_SPEED, pos.y + cos(angle) * delta * SIMULATION_SPEED);
 
         if (new_pos.x < 0 || new_pos.x >= SIMULATION_WIDTH || new_pos.y < 0 || new_pos.y >= SIMULATION_HEIGHT) {
-            individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].z = rand1 / 4294967295.0 * 6.28319;
+            individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].z = rand1 / 4294967295.0 * 6.28319;
             new_pos.x = min(SIMULATION_WIDTH - 1, max(0, new_pos.x));
             new_pos.y = min(SIMULATION_HEIGHT - 1, max(0, new_pos.y));
         }
 
-        individuals[gl_GlobalInvocationID.x * GROUP_COMPUTE_SIZE + i].xy = new_pos;
+        individuals[gl_GlobalInvocationID.x * LOCAL_COMPUTE_SIZE + i].xy = new_pos;
         imageStore(img_output, ivec2(new_pos), vec4(1.0, 1.0, 1.0, 1.0));
     }
 }

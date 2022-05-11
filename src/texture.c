@@ -3,7 +3,7 @@
 #include "deps/glad/glad.h"
 #include "deps/stb/stb_image.h"
 
-Texture* create_texture() {
+Texture* texture_create() {
     return (Texture*)malloc(sizeof(Texture));
 }
 

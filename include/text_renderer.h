@@ -7,8 +7,8 @@ typedef struct {
     uint32_t vao, vbo, ebo;
 } TextRenderer;
 
-TextRenderer* create_text_renderer();
+TextRenderer* text_renderer_create();
 
-free_text_renderer(TextRenderer* text_renderer);
+void text_renderer_free(TextRenderer* text_renderer);
 
-void draw_text(TextRenderer* text_renderer, const uint8_t* text, Texture* font_texture, ShaderProgram* shader_program, uint32_t x,  uint32_t y,  uint32_t scale);
+void text_renderer_draw_text(TextRenderer* text_renderer, const char* text, Texture* font_texture, ShaderProgram* shader_program, int32_t x,  int32_t y, float scale);
