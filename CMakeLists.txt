@@ -11,11 +11,18 @@ add_compile_options(
 project(Physarum)
 
 SET(Physarum_SRC
-    src/main.c
     src/deps/glad/glad.c
+    src/deps/stb/stb_image.c
+    src/gl_error_handeling.c
+    src/main.c
+    src/shader_program.c
+    src/shader.c
+    src/text_renderer.c
+    src/texture.c
 )
 
 SET(Physarum_INCLUDE_DIRS
+    include/
     include/deps/
     include/deps/glad/
 )
@@ -35,3 +42,5 @@ endif(OpenGL_FOUND)
 if (SDL2_FOUND)
     target_link_libraries(Physarum_Executable SDL2::SDL2)
 endif (SDL2_FOUND)
+
+target_link_libraries(Physarum_Executable m)
