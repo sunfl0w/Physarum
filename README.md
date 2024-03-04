@@ -1,7 +1,7 @@
 # Simple Physarum Simulation
 
 A simple simulation program simulating Physarum behaviour written in C and using OpenGL compute shaders.
-Inspired by and based on this video https://www.youtube.com/watch?v=X-iSQQgOd1A&t=917s by Sebastian Lague.
+Inspired by and based on this [video](https://www.youtube.com/watch?v=X-iSQQgOd1A&t=917s) by Sebastian Lague.
 
 ### Command Args
 
@@ -22,3 +22,7 @@ Inspired by and based on this video https://www.youtube.com/watch?v=X-iSQQgOd1A&
 -R (float) => Individual trail decay rate.
 
 -F => Enables FPS-Counter.
+
+### Screenshot
+
+![Screenshot](PhysarumSim.png)
