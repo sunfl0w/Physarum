@@ -15,4 +15,4 @@ typedef struct {
 
 Shader* shader_create();
 
-uint32_t shader_load_from_file(Shader* const shader, const char* const path, uint32_t shader_type);
+int shader_load_from_file(Shader* const shader, const char* const path, uint32_t shader_type);

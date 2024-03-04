@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.11)
 
 set(CMAKE_C_STANDARD 11)
 
@@ -17,6 +17,7 @@ SET(Physarum_SRC
     src/main.c
     src/shader_program.c
     src/shader.c
+    src/stopwatch.c
     src/text_renderer.c
     src/texture.c
 )

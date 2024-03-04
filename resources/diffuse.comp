@@ -1,11 +1,11 @@
 #version 430 core
 
-#define IMG_WIDTH 1920
-#define IMG_HEIGHT 1080
-#define BLUR_WEIGHT 0.01
-#define DECAY_RATE 0.1
+uniform int image_width;
+uniform int image_height;
+uniform float blur_weight;
+uniform float decay_rate;
 
-layout(local_size_x = 1) in;
+layout(local_size_x = 10, local_size_y = 10) in;
 layout(rgba32f, binding = 0) uniform image2D img;
 layout(std430, binding = 2) buffer cs_time {
     float delta;
@@ -16,13 +16,13 @@ void main() {
 
     vec3 original = imageLoad(img, pos).rgb;
     vec3 blur = vec3(0);
-    for(int x = max(0, pos.x - 1); x <= min(IMG_WIDTH - 1, pos.x + 1); x ++) {
-        for(int y = max(0, pos.y - 1); y <= min(IMG_HEIGHT - 1, pos.y + 1); y ++) {
+    for(int x = pos.x - 1; x <= pos.x + 1; x ++) {
+        for(int y = pos.y - 1; y <= pos.y + 1; y ++) {
             blur += imageLoad(img, ivec2(x, y)).rgb;
         }
     }
     blur /= 9.0;
 
-    blur = (1 - BLUR_WEIGHT) * original + BLUR_WEIGHT * blur;
-    imageStore(img, pos, vec4(max(blur - DECAY_RATE * delta, 0), 1.0));
+    blur = (1 - blur_weight) * original + blur_weight * blur;
+    imageStore(img, pos, vec4(max(blur - decay_rate * delta, 0), 1.0));
 }
